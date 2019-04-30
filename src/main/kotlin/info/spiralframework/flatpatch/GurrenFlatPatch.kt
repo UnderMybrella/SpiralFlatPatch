@@ -9,6 +9,8 @@ import info.spiralframework.console.eventbus.ParboiledCommand
 import info.spiralframework.console.eventbus.ParboiledCommand.Companion.SUCCESS
 import info.spiralframework.console.eventbus.ParboiledCommand.Companion.fail
 import info.spiralframework.core.SpiralSerialisation
+import info.spiralframework.formats.archives.CPK
+import info.spiralframework.formats.archives.CPKFileEntry
 import info.spiralframework.formats.archives.WAD
 import info.spiralframework.formats.archives.WADFileEntry
 import info.spiralframework.formats.customWAD
@@ -25,7 +27,7 @@ import kotlin.system.measureTimeMillis
 class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandClass {
     companion object {
         val DR1_WAD_REGEX = "dr1_data(_keyboard)?(_[a-z]{2})?\\.wad".toRegex()
-        val DR1_WAD_LANG_REGEX = "dr1_data(_keyboard)?(_[a-z]{2})?\\.wad".toRegex()
+        val DR1_WAD_LANG_REGEX = "dr1_data(_keyboard)_[a-z]{2}\\.wad".toRegex()
         val DR1_WAD_KB_REGEX = "dr1_data_keyboard(_[a-z]{2})?\\.wad".toRegex()
         val DR1_FILE_SE_REGEX =
             "Dr(\\d|Common)/data/(all|[a-z]{2})/se/se\\d_\\d{3}\\.acb\\.files/HS_SE_\\d{3}\\.wav".toRegex()
@@ -34,7 +36,7 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
         val DR1_STEAM_FOLDER_REGEX = Regex.fromLiteral("Danganronpa Trigger Happy Havoc")
 
         val DR2_WAD_REGEX = "dr2_data(_keyboard)?(_[a-z]{2})?\\.wad".toRegex()
-        val DR2_WAD_LANG_REGEX = "dr2_data(_keyboard)?(_[a-z]{2})?\\.wad".toRegex()
+        val DR2_WAD_LANG_REGEX = "dr2_data(_keyboard)_[a-z]{2}\\.wad".toRegex()
         val DR2_WAD_KB_REGEX = "dr2_data_keyboard(_[a-z]{2})?\\.wad".toRegex()
         val DR2_FILE_SE_REGEX =
             "Dr(\\d|Common)/data/(all|[a-z]{2})/se/SE\\d_\\d\\.acb\\.files/DR2_SE_\\d{3}\\.wav".toRegex()
@@ -42,7 +44,13 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
         val DR2_EXECUTABLE_REGEX = "DR2_(us)\\.(exe)".toRegex()
         val DR2_STEAM_FOLDER_REGEX = Regex.fromLiteral("Danganronpa 2 Goodbye Despair")
 
-        val DRv3_CPK_REGEX = "partition_(data|resident)_(win)(_[a-z]{2})?\\.cpk".toRegex()
+        val DRV3_CPK_REGEX = "partition_(data|resident)_(win)(_demo)?(_[a-z]{2})?\\.cpk".toRegex()
+        val DRV3_CPK_LANG_REGEX = "partition_(data|resident)_(win)(_demo)?_[a-z]{2}\\.cpk".toRegex()
+        val DRV3_CPK_RESIDENT_REGEX = "partition_resident_(win)(_demo)?(_[a-z]{2})?\\.cpk".toRegex()
+
+        val DRV3_EXECUTABLE_REGEX = "Dangan3(Win)\\.(exe)".toRegex()
+        val DRV3_STEAM_FOLDER_REGEX = "Danganronpa V3 Killing Harmony( Demo)?".toRegex()
+
     }
 
     val builders = CommandBuilders(parameterParser)
@@ -143,6 +151,17 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
             }
 
             if (workspaceBuilder.game == null) {
+                workspaceBuilder.workplacePath?.takeIf(File::isDirectory)?.let { path ->
+                    workspaceBuilder.game = when {
+                        path.name.matches(DR1_STEAM_FOLDER_REGEX) -> DR1
+                        path.name.matches(DR2_STEAM_FOLDER_REGEX) -> DR2
+                        path.name.matches(DRV3_STEAM_FOLDER_REGEX) -> V3
+                        else -> null
+                    }
+                }
+            }
+
+            if (workspaceBuilder.game == null) {
                 printLocale("commands.flatpatch.prepare_workspace.builder.game")
                 workspaceBuilder.game = builders.parameter()?.let { gameStr ->
                     if (DR1.names.any { str -> str.equals(gameStr, true) })
@@ -178,8 +197,123 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
             return@ParboiledCommand fail("commands.flatpatch.prepare_workspace.err_no_game")
 
         when (args.game) {
-            DR1 -> prepareDR12(args.workplacePath, DR1_WAD_REGEX, DR1_WAD_LANG_REGEX, DR1_WAD_KB_REGEX, DR1_FILE_SE_REGEX)
-            DR2 -> prepareDR12(args.workplacePath, DR2_WAD_REGEX, DR2_WAD_LANG_REGEX, DR2_WAD_KB_REGEX, DR2_FILE_SE_REGEX)
+            DR1 -> prepareDR12(
+                args.workplacePath,
+                DR1_WAD_REGEX,
+                DR1_WAD_LANG_REGEX,
+                DR1_WAD_KB_REGEX,
+                DR1_FILE_SE_REGEX
+            )
+            DR2 -> prepareDR12(
+                args.workplacePath,
+                DR2_WAD_REGEX,
+                DR2_WAD_LANG_REGEX,
+                DR2_WAD_KB_REGEX,
+                DR2_FILE_SE_REGEX
+            )
+            V3 -> {
+                val cpkFiles = args.workplacePath.listFiles().filter { file -> file.name.matches(DRV3_CPK_REGEX) }
+                    .sortedBy { file ->
+                        var weight = 0
+                        if (file.name.matches(DRV3_CPK_LANG_REGEX))
+                            weight = weight or 0b010
+                        if (file.name.matches(DRV3_CPK_RESIDENT_REGEX))
+                            weight = weight or 0b100
+                        return@sortedBy weight
+                    }
+
+                //V3 uses a slightly different system to the previous games; for one, it already has a folder to put the files in
+                //Our path has been normalised, and what we want to do is create a parent to store our files in
+
+                val parentPath = args.workplacePath.absoluteFile.parentFile
+
+                val baseGamePath = File(parentPath, "base_game")
+                baseGamePath.mkdir()
+
+                val contentPath = args.workplacePath
+
+                val backupCpkPath = File(parentPath, "backup_cpks")
+                backupCpkPath.mkdir()
+
+                cpkFiles.forEach { cpkFile ->
+                    val cpk = CPK(cpkFile::inputStream)
+                        ?: return@forEach printlnLocale(
+                            "commands.flatpatch.prepare_workspace.err_not_cpk",
+                            cpkFile.name
+                        )
+
+                    if (cpk.files.isEmpty())
+                        return@forEach printlnLocale(
+                            "commands.flatpatch.prepare_workspace.err_cpk_no_files",
+                            cpkFile.name
+                        )
+
+                    val extractTime = measureTimeMillis {
+                        val files = cpk.files.sortedBy(CPKFileEntry::offset)
+
+                        ProgressTracker(
+                            downloadingText = locale(
+                                "commands.flatpatch.prepare_workspace.extracting",
+                                cpkFile.name
+                            ), downloadedText = ""
+                        ) {
+                            //Due to the **hefty** nature of these files, we're gonna chunk them to give some feedback to the user
+
+                            files.map(CPKFileEntry::directoryName).distinct().forEach { originalName ->
+                                val name = originalName.normalisePath()
+                                val baseGameDir = File(baseGamePath, name)
+                                val contentDir = File(contentPath, name)
+
+                                baseGameDir.mkdirs()
+                                contentDir.mkdirs()
+                            }
+
+                            val chunks = files.chunked(maxOf(files.size / 100, 1))
+                            chunks.forEachIndexed { index, chunk ->
+                                chunk.forEach { entry ->
+                                    val file = File(baseGamePath, entry.name.normalisePath())
+                                    entry.inputStream.use { stream -> FileOutputStream(file).use(stream::copyToStream) }
+                                }
+                                trackDownload(index.toLong(), chunks.size.toLong())
+                            }
+                        }
+                    }
+                    val linkTime = measureTimeMillis {
+                        arbitraryProgressBar(
+                            loadingText = locale(
+                                "commands.flatpatch.prepare_workspace.linking",
+                                cpkFile.name
+                            ), loadedText = ""
+                        ) {
+                            cpk.files.forEach { entry ->
+                                val name = entry.name.normalisePath()
+                                val contentFile = File(contentPath, name)
+                                val baseGameFile = File(baseGamePath, name)
+
+                                if (!contentFile.exists()) {
+                                    try {
+                                        Files.createLink(contentFile.toPath(), baseGameFile.toPath())
+                                    } catch (io: IOException) {
+                                        io.printStackTrace()
+                                        return@arbitraryProgressBar
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    printlnLocale(
+                        "commands.flatpatch.prepare_workspace.extracted_cpk",
+                        cpkFile.name,
+                        extractTime,
+                        linkTime
+                    )
+
+                    val backupWadDest = File(backupCpkPath, cpkFile.name)
+                    if (!backupWadDest.exists())
+                        cpkFile.renameTo(backupWadDest)
+                }
+            }
+            else -> TODO(args.game.toString())
         }
 
         return@ParboiledCommand SUCCESS
@@ -328,6 +462,7 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
                     executableBuilder.game = when {
                         path.name.matches(DR1_EXECUTABLE_REGEX) -> DR1
                         path.name.matches(DR2_EXECUTABLE_REGEX) -> DR2
+                        path.name.matches(DRV3_EXECUTABLE_REGEX) -> V3
                         else -> null
                     }
                 }
@@ -336,6 +471,7 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
                     executableBuilder.game = when {
                         path.name.matches(DR1_STEAM_FOLDER_REGEX) -> DR1
                         path.name.matches(DR2_STEAM_FOLDER_REGEX) -> DR2
+                        path.name.matches(DRV3_STEAM_FOLDER_REGEX) -> V3
                         else -> null
                     }
                 }
