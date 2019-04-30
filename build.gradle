@@ -27,3 +27,36 @@ compileKotlin {
 compileTestKotlin {
     kotlinOptions.jvmTarget = "1.8"
 }
+
+configurations {
+    compileInclude
+
+    compile.extendsFrom(compileInclude)
+}
+
+jar {
+    baseName = "SpiralFlatPatch"
+    appendix = ""
+    version = ""
+}
+
+task sourcesJar(type: Jar, dependsOn: classes) {
+    classifier = 'sources'
+    baseName = jar.baseName
+    appendix = jar.appendix
+    version = jar.version
+    from sourceSets.main.allSource
+}
+
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    classifier = 'javadoc'
+    baseName = jar.baseName
+    appendix = jar.appendix
+    version = jar.version
+    from javadoc.destinationDir
+}
+
+artifacts {
+    archives sourcesJar
+    archives javadocJar
+}
