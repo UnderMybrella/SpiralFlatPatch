@@ -16,6 +16,7 @@ import info.spiralframework.formats.archives.WADFileEntry
 import info.spiralframework.formats.customWAD
 import info.spiralframework.formats.game.hpa.DR1
 import info.spiralframework.formats.game.hpa.DR2
+import info.spiralframework.formats.game.hpa.UDG
 import info.spiralframework.formats.game.v3.V3
 import info.spiralframework.formats.utils.readZeroString
 import org.parboiled.Action
@@ -35,6 +36,8 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
         val DR1_EXECUTABLE_REGEX = "DR1_(us)\\.(exe)".toRegex()
         val DR1_STEAM_FOLDER_REGEX = Regex.fromLiteral("Danganronpa Trigger Happy Havoc")
 
+
+
         val DR2_WAD_REGEX = "dr2_data(_keyboard)?(_[a-z]{2})?\\.wad".toRegex()
         val DR2_WAD_LANG_REGEX = "dr2_data(_keyboard)_[a-z]{2}\\.wad".toRegex()
         val DR2_WAD_KB_REGEX = "dr2_data_keyboard(_[a-z]{2})?\\.wad".toRegex()
@@ -43,6 +46,13 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
 
         val DR2_EXECUTABLE_REGEX = "DR2_(us)\\.(exe)".toRegex()
         val DR2_STEAM_FOLDER_REGEX = Regex.fromLiteral("Danganronpa 2 Goodbye Despair")
+
+
+
+        val UDG_CPK_REGEX = "a\\d\\.cpk".toRegex()
+        val UDG_CPK_STRIPPING_REGEX = "\\D".toRegex()
+        val UDG_STEAM_FOLDER_REGEX = Regex.fromLiteral("Danganronpa Another Episode Ultra Despair Girls")
+        val UDG_STEAM_FOLDER_DATA_REGEX = "[a-z]{2}".toRegex()
 
         val DRV3_CPK_REGEX = "partition_(data|resident)_(win)(_demo)?(_[a-z]{2})?\\.cpk".toRegex()
         val DRV3_CPK_LANG_REGEX = "partition_(data|resident)_(win)(_demo)?_[a-z]{2}\\.cpk".toRegex()
@@ -155,6 +165,7 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
                     workspaceBuilder.game = when {
                         path.name.matches(DR1_STEAM_FOLDER_REGEX) -> DR1
                         path.name.matches(DR2_STEAM_FOLDER_REGEX) -> DR2
+                        path.name.matches(UDG_STEAM_FOLDER_REGEX) -> UDG
                         path.name.matches(DRV3_STEAM_FOLDER_REGEX) -> V3
                         else -> null
                     }
@@ -164,16 +175,16 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
             if (workspaceBuilder.game == null) {
                 printLocale("commands.flatpatch.prepare_workspace.builder.game")
                 workspaceBuilder.game = builders.parameter()?.let { gameStr ->
-                    if (DR1.names.any { str -> str.equals(gameStr, true) })
-                        return@let DR1
-                    if (DR2.names.any { str -> str.equals(gameStr, true) })
-                        return@let DR2
-                    if (V3.names.any { str -> str.equals(gameStr, true) })
-                        return@let V3
-                    return@ParboiledCommand fail(
-                        "commands.flatpatch.prepare_workspace.builder.err_no_game_for_name",
-                        gameStr
-                    )
+                    when {
+                        DR1.names.any { str -> str.equals(gameStr, true) } -> return@let DR1
+                        DR2.names.any { str -> str.equals(gameStr, true) } -> return@let DR2
+                        UDG.names.any { str -> str.equals(gameStr, true) } -> return@let UDG
+                        V3.names.any { str -> str.equals(gameStr, true) } -> return@let V3
+                        else -> return@ParboiledCommand fail(
+                            "commands.flatpatch.prepare_workspace.builder.err_no_game_for_name",
+                            gameStr
+                        )
+                    }
                 } ?: return@ParboiledCommand fail(
                     "commands.flatpatch.prepare_workspace.builder.err_no_game_for_name",
                     ""
@@ -197,121 +208,28 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
             return@ParboiledCommand fail("commands.flatpatch.prepare_workspace.err_no_game")
 
         when (args.game) {
-            DR1 -> prepareDR12(
+            DR1 -> prepareWadGame(
                 args.workplacePath,
                 DR1_WAD_REGEX,
                 DR1_WAD_LANG_REGEX,
                 DR1_WAD_KB_REGEX,
                 DR1_FILE_SE_REGEX
             )
-            DR2 -> prepareDR12(
+            DR2 -> prepareWadGame(
                 args.workplacePath,
                 DR2_WAD_REGEX,
                 DR2_WAD_LANG_REGEX,
                 DR2_WAD_KB_REGEX,
                 DR2_FILE_SE_REGEX
             )
-            V3 -> {
-                val cpkFiles = args.workplacePath.listFiles().filter { file -> file.name.matches(DRV3_CPK_REGEX) }
-                    .sortedBy { file ->
-                        var weight = 0
-                        if (file.name.matches(DRV3_CPK_LANG_REGEX))
-                            weight = weight or 0b010
-                        if (file.name.matches(DRV3_CPK_RESIDENT_REGEX))
-                            weight = weight or 0b100
-                        return@sortedBy weight
-                    }
-
-                //V3 uses a slightly different system to the previous games; for one, it already has a folder to put the files in
-                //Our path has been normalised, and what we want to do is create a parent to store our files in
-
-                val parentPath = args.workplacePath.absoluteFile.parentFile
-
-                val baseGamePath = File(parentPath, "base_game")
-                baseGamePath.mkdir()
-
-                val contentPath = args.workplacePath
-
-                val backupCpkPath = File(parentPath, "backup_cpks")
-                backupCpkPath.mkdir()
-
-                cpkFiles.forEach { cpkFile ->
-                    val cpk = CPK(cpkFile::inputStream)
-                        ?: return@forEach printlnLocale(
-                            "commands.flatpatch.prepare_workspace.err_not_cpk",
-                            cpkFile.name
-                        )
-
-                    if (cpk.files.isEmpty())
-                        return@forEach printlnLocale(
-                            "commands.flatpatch.prepare_workspace.err_cpk_no_files",
-                            cpkFile.name
-                        )
-
-                    val extractTime = measureTimeMillis {
-                        val files = cpk.files.sortedBy(CPKFileEntry::offset)
-
-                        ProgressTracker(
-                            downloadingText = locale(
-                                "commands.flatpatch.prepare_workspace.extracting",
-                                cpkFile.name
-                            ), downloadedText = ""
-                        ) {
-                            //Due to the **hefty** nature of these files, we're gonna chunk them to give some feedback to the user
-
-                            files.map(CPKFileEntry::directoryName).distinct().forEach { originalName ->
-                                val name = originalName.normalisePath()
-                                val baseGameDir = File(baseGamePath, name)
-                                val contentDir = File(contentPath, name)
-
-                                baseGameDir.mkdirs()
-                                contentDir.mkdirs()
-                            }
-
-                            val chunks = files.chunked(maxOf(files.size / 100, 1))
-                            chunks.forEachIndexed { index, chunk ->
-                                chunk.forEach { entry ->
-                                    val file = File(baseGamePath, entry.name.normalisePath())
-                                    entry.inputStream.use { stream -> FileOutputStream(file).use(stream::copyToStream) }
-                                }
-                                trackDownload(index.toLong(), chunks.size.toLong())
-                            }
-                        }
-                    }
-                    val linkTime = measureTimeMillis {
-                        arbitraryProgressBar(
-                            loadingText = locale(
-                                "commands.flatpatch.prepare_workspace.linking",
-                                cpkFile.name
-                            ), loadedText = ""
-                        ) {
-                            cpk.files.forEach { entry ->
-                                val name = entry.name.normalisePath()
-                                val contentFile = File(contentPath, name)
-                                val baseGameFile = File(baseGamePath, name)
-
-                                if (!contentFile.exists()) {
-                                    try {
-                                        Files.createLink(contentFile.toPath(), baseGameFile.toPath())
-                                    } catch (io: IOException) {
-                                        io.printStackTrace()
-                                        return@arbitraryProgressBar
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    printlnLocale(
-                        "commands.flatpatch.prepare_workspace.extracted_cpk",
-                        cpkFile.name,
-                        extractTime,
-                        linkTime
-                    )
-
-                    val backupWadDest = File(backupCpkPath, cpkFile.name)
-                    if (!backupWadDest.exists())
-                        cpkFile.renameTo(backupWadDest)
-                }
+            UDG -> prepareCpkGame(args.workplacePath, UDG_CPK_REGEX, true, true) { file -> file.nameWithoutExtension.replace(UDG_CPK_STRIPPING_REGEX, "").toIntOrNull() ?: 0 }
+            V3 -> prepareCpkGame(args.workplacePath, DRV3_CPK_REGEX, false, false) { file ->
+                var weight = 0
+                if (file.name.matches(DRV3_CPK_LANG_REGEX))
+                    weight = weight or 0b010
+                if (file.name.matches(DRV3_CPK_RESIDENT_REGEX))
+                    weight = weight or 0b100
+                weight
             }
             else -> TODO(args.game.toString())
         }
@@ -319,7 +237,7 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
         return@ParboiledCommand SUCCESS
     }
 
-    fun prepareDR12(workplacePath: File, wadRegex: Regex, langRegex: Regex, kbRegex: Regex, seRegex: Regex) {
+    fun prepareWadGame(workplacePath: File, wadRegex: Regex, langRegex: Regex, kbRegex: Regex, seRegex: Regex) {
         val wadFiles = workplacePath.listFiles().filter { file -> file.name.matches(wadRegex) }
             .sortedBy { file ->
                 var weight = 0
@@ -442,6 +360,108 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
                 wadFile.renameTo(backupWadDest)
 
             FileOutputStream(wadFile).use(empty::compile)
+        }
+    }
+
+    fun prepareCpkGame(workplacePath: File, cpkRegex: Regex, makeEmptyArchives: Boolean, contentIsParent: Boolean, weighting: (File) -> Int) {
+        val cpkFiles = workplacePath.listFiles().filter { file -> file.name.matches(cpkRegex) }
+            .sortedBy(weighting)
+
+        //V3 uses a slightly different system to the previous games; for one, it already has a folder to put the files in
+        //Our path has been normalised, and what we want to do is create a parent to store our files in
+
+        val parentPath = workplacePath.absoluteFile.parentFile
+
+        val baseGamePath = File(parentPath, "base_game")
+        baseGamePath.mkdir()
+
+        val contentPath = if (contentIsParent) parentPath else workplacePath
+
+        val backupCpkPath = File(parentPath, "backup_cpks")
+        backupCpkPath.mkdir()
+
+        cpkFiles.forEach { cpkFile ->
+            val cpk = CPK(cpkFile::inputStream)
+                ?: return@forEach printlnLocale(
+                    "commands.flatpatch.prepare_workspace.err_not_cpk",
+                    cpkFile.name
+                )
+
+            if (cpk.files.isEmpty())
+                return@forEach printlnLocale(
+                    "commands.flatpatch.prepare_workspace.err_cpk_no_files",
+                    cpkFile.name
+                )
+
+            val extractTime = measureTimeMillis {
+                val files = cpk.files.sortedBy(CPKFileEntry::offset)
+
+                ProgressTracker(
+                    downloadingText = locale(
+                        "commands.flatpatch.prepare_workspace.extracting",
+                        cpkFile.name
+                    ), downloadedText = ""
+                ) {
+                    //Due to the **hefty** nature of these files, we're gonna chunk them to give some feedback to the user
+
+                    files.map(CPKFileEntry::directoryName).distinct().forEach { originalName ->
+                        val name = originalName.normalisePath()
+                        val baseGameDir = File(baseGamePath, name)
+                        val contentDir = File(contentPath, name)
+
+                        baseGameDir.mkdirs()
+                        contentDir.mkdirs()
+                    }
+
+                    val chunks = files.chunked(maxOf(files.size / 100, 1))
+                    chunks.forEachIndexed { index, chunk ->
+                        chunk.forEach { entry ->
+                            val file = File(baseGamePath, entry.name.normalisePath())
+                            entry.inputStream.use { stream -> FileOutputStream(file).use(stream::copyToStream) }
+                        }
+                        trackDownload(index.toLong(), chunks.size.toLong())
+                    }
+                }
+            }
+            val linkTime = measureTimeMillis {
+                arbitraryProgressBar(
+                    loadingText = locale(
+                        "commands.flatpatch.prepare_workspace.linking",
+                        cpkFile.name
+                    ), loadedText = ""
+                ) {
+                    cpk.files.forEach { entry ->
+                        val name = entry.name.normalisePath()
+                        val contentFile = File(contentPath, name)
+                        val baseGameFile = File(baseGamePath, name)
+
+                        if (!contentFile.exists()) {
+                            try {
+                                Files.createLink(contentFile.toPath(), baseGameFile.toPath())
+                            } catch (io: IOException) {
+                                io.printStackTrace()
+                                return@arbitraryProgressBar
+                            }
+                        }
+                    }
+                }
+            }
+            printlnLocale(
+                "commands.flatpatch.prepare_workspace.extracted_cpk",
+                cpkFile.name,
+                extractTime,
+                linkTime
+            )
+
+            val backupCpkDest = File(backupCpkPath, cpkFile.name)
+            if (!backupCpkDest.exists())
+                cpkFile.renameTo(backupCpkDest)
+
+            if (makeEmptyArchives) {
+                GurrenFlatPatch::class.java.classLoader.getResourceAsStream("empty.cpk")?.use { empty ->
+                    FileOutputStream(cpkFile).use(empty::copyToStream)
+                } ?: FlatPatchPlugin.LOGGER.error("commands.flatpatch.prepare_workspace.err_no_empty_cpk")
+            }
         }
     }
 
