@@ -1,6 +1,6 @@
 name: Spiral Framework - Flat Patch
 uid: SPIRAL_FRAMEWORK_FLATPATCH
-semanticVersion: 0.2.0
+semanticVersion: 1.0.0
 
 supportedModules:
   - spiral-console
