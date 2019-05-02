@@ -15,6 +15,17 @@ fun File.normaliseForDataFiles(): File {
         return this
 }
 
+fun File.normaliseForContentFile(): File {
+    if (this.name.endsWith(".app") && this.isDirectory)
+        return File(this, "Contents")
+    else if (this.name.matches(GurrenFlatPatch.DRV3_STEAM_FOLDER_REGEX))
+        return File(this, "data")
+    else if (this.name.matches(GurrenFlatPatch.UDG_STEAM_FOLDER_REGEX))
+        return File(this, "data")
+    else
+        return this
+}
+
 fun File.normaliseForExecutable(): File =
     if (this.name.endsWith(".app") && this.isDirectory) File(this, "Contents") else this
 

@@ -35,8 +35,7 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
 
         val DR1_EXECUTABLE_REGEX = "DR1_(us)\\.(exe)".toRegex()
         val DR1_STEAM_FOLDER_REGEX = Regex.fromLiteral("Danganronpa Trigger Happy Havoc")
-
-
+        val DR1_CONTENT_FOLDER_REGEX = Regex.fromLiteral("content")
 
         val DR2_WAD_REGEX = "dr2_data(_keyboard)?(_[a-z]{2})?\\.wad".toRegex()
         val DR2_WAD_LANG_REGEX = "dr2_data(_keyboard)_[a-z]{2}\\.wad".toRegex()
@@ -46,21 +45,22 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
 
         val DR2_EXECUTABLE_REGEX = "DR2_(us)\\.(exe)".toRegex()
         val DR2_STEAM_FOLDER_REGEX = Regex.fromLiteral("Danganronpa 2 Goodbye Despair")
-
-
+        val DR2_CONTENT_FOLDER_REGEX = Regex.fromLiteral("content")
 
         val UDG_CPK_REGEX = "a\\d\\.cpk".toRegex()
         val UDG_CPK_STRIPPING_REGEX = "\\D".toRegex()
         val UDG_STEAM_FOLDER_REGEX = Regex.fromLiteral("Danganronpa Another Episode Ultra Despair Girls")
+        val UDG_EXECUTABLE_REGEX = Regex.fromLiteral("game.exe")
         val UDG_STEAM_FOLDER_DATA_REGEX = "[a-z]{2}".toRegex()
+        val UDG_CONTENT_FOLDER_REGEX = Regex.fromLiteral("data")
 
         val DRV3_CPK_REGEX = "partition_(data|resident)_(win)(_demo)?(_[a-z]{2})?\\.cpk".toRegex()
         val DRV3_CPK_LANG_REGEX = "partition_(data|resident)_(win)(_demo)?_[a-z]{2}\\.cpk".toRegex()
         val DRV3_CPK_RESIDENT_REGEX = "partition_resident_(win)(_demo)?(_[a-z]{2})?\\.cpk".toRegex()
 
-        val DRV3_EXECUTABLE_REGEX = "Dangan3(Win)\\.(exe)".toRegex()
+        val DRV3_EXECUTABLE_REGEX = "Dangan3(Win)\\.exe".toRegex()
         val DRV3_STEAM_FOLDER_REGEX = "Danganronpa V3 Killing Harmony( Demo)?".toRegex()
-
+        val DRV3_CONTENT_FOLDER_REGEX = "win(_demo)?".toRegex()
     }
 
     val builders = CommandBuilders(parameterParser)
@@ -149,6 +149,77 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
         )
     }
 
+    val linkContentRule = makeRuleWith(::LinkContentArgs) { argsVar ->
+        Sequence(
+            FirstOf(
+                Sequence(
+                    Localised("commands.flatpatch.link_content.base"),
+                    Action<Any> { argsVar.get().createLink = true; true }
+                ),
+                Sequence(
+                    Localised("commands.flatpatch.link_content.unlink"),
+                    Action<Any> { argsVar.get().createLink = false; true }
+                )
+            ),
+            Action<Any> { pushMarkerSuccessBase() },
+            Optional(
+                InlineWhitespace(),
+                FirstOf(
+                    Sequence(
+                        Localised("commands.flatpatch.link_content.builder"),
+                        Action<Any> { argsVar.get().builder = true; true }
+                    ),
+                    Sequence(
+                        ExistingFilePath(),
+                        Action<Any> { argsVar.get().workspacePath = pop() as? File; true }
+                    )
+                ),
+                ZeroOrMore(
+                    InlineWhitespace(),
+                    FirstOf(
+                        Sequence(
+                            Localised("commands.flatpatch.link_content.linking_name"),
+                            InlineWhitespace(),
+                            Parameter(),
+                            Action<Any> { argsVar.get().linkingContentName = pop() as? String; true }
+                        ),
+                        Sequence(
+                            Localised("commands.flatpatch.link_content.linking_path"),
+                            InlineWhitespace(),
+                            ExistingFilePath(),
+                            Action<Any> { argsVar.get().linkingContentPath = pop() as? File; true }
+                        ),
+                        Sequence(
+                            Localised("commands.flatpatch.link_content.game"),
+                            InlineWhitespace(),
+                            Parameter(),
+                            Action<Any> {
+                                val gameStr = pop() as String
+                                when {
+                                    DR1.names.any { str -> str.equals(gameStr, true) } -> argsVar.get().game = DR1
+                                    DR2.names.any { str -> str.equals(gameStr, true) } -> argsVar.get().game = DR2
+                                    V3.names.any { str -> str.equals(gameStr, true) } -> argsVar.get().game = V3
+                                    else -> return@Action pushMarkerFailedLocale(
+                                        locale("commands.flatpatch.link_content.err_no_game_for_name", gameStr)
+                                    )
+                                }
+
+                                return@Action true
+                            }
+                        ),
+                        Sequence(
+                            Localised("commands.flatpatch.link_content.filter"),
+                            InlineWhitespace(),
+                            Filter(),
+                            Action<Any> { argsVar.get().filter = pop() as? Regex; true }
+                        )
+                    )
+                ),
+                Action<Any> { pushMarkerSuccessCommand() }
+            )
+        )
+    }
+
     val prepareWorkspace = ParboiledCommand(prepareWorkspaceRule) { stack ->
         val workspaceBuilder = stack[0] as ExtractWorkspaceArgs
 
@@ -222,7 +293,12 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
                 DR2_WAD_KB_REGEX,
                 DR2_FILE_SE_REGEX
             )
-            UDG -> prepareCpkGame(args.workplacePath, UDG_CPK_REGEX, true, true) { file -> file.nameWithoutExtension.replace(UDG_CPK_STRIPPING_REGEX, "").toIntOrNull() ?: 0 }
+            UDG -> prepareCpkGame(
+                args.workplacePath,
+                UDG_CPK_REGEX,
+                true,
+                true
+            ) { file -> file.nameWithoutExtension.replace(UDG_CPK_STRIPPING_REGEX, "").toIntOrNull() ?: 0 }
             V3 -> prepareCpkGame(args.workplacePath, DRV3_CPK_REGEX, false, false) { file ->
                 var weight = 0
                 if (file.name.matches(DRV3_CPK_LANG_REGEX))
@@ -363,7 +439,13 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
         }
     }
 
-    fun prepareCpkGame(workplacePath: File, cpkRegex: Regex, makeEmptyArchives: Boolean, contentIsParent: Boolean, weighting: (File) -> Int) {
+    fun prepareCpkGame(
+        workplacePath: File,
+        cpkRegex: Regex,
+        makeEmptyArchives: Boolean,
+        contentIsParent: Boolean,
+        weighting: (File) -> Int
+    ) {
         val cpkFiles = workplacePath.listFiles().filter { file -> file.name.matches(cpkRegex) }
             .sortedBy(weighting)
 
@@ -522,6 +604,8 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
                 val regex = when (game) {
                     DR1 -> DR1_EXECUTABLE_REGEX
                     DR2 -> DR2_EXECUTABLE_REGEX
+                    UDG -> UDG_EXECUTABLE_REGEX
+                    V3 -> DRV3_EXECUTABLE_REGEX
                     else -> TODO("Make regex for $game executable")
                 }
                 executableBuilder.executablePath = executablePath.listFiles()
@@ -671,6 +755,163 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
                 }
             }
         }
+
+        return@ParboiledCommand SUCCESS
+    }
+
+    val linkContent = ParboiledCommand(linkContentRule) { stack ->
+        val builder = stack[0] as LinkContentArgs
+
+        //Step 1. Check all our data's there
+
+        builder.workspacePath = builder.workspacePath?.normaliseForContentFile()
+        if (builder.workspacePath == null || builder.game == null || (builder.linkingContentPath == null && builder.linkingContentName == null) || builder.builder) {
+            if (builder.workspacePath == null) {
+                printLocale("commands.flatpatch.link_content.builder.workspace")
+                builder.workspacePath = builders.filePath()?.normaliseForContentFile()
+            }
+
+            if (builder.game == null) {
+                builder.workspacePath?.takeIf(File::isDirectory)?.let { path ->
+                    builder.game = when {
+                        path.name.matches(DR1_STEAM_FOLDER_REGEX) -> DR1
+                        path.name.matches(DR2_STEAM_FOLDER_REGEX) -> DR2
+                        path.name.matches(DRV3_STEAM_FOLDER_REGEX) -> V3
+                        else -> null
+                    }
+                }
+            }
+
+            if (builder.game == null) {
+                printLocale("commands.flatpatch.link_content.builder.game")
+                builder.game = builders.parameter()?.let { gameStr ->
+                    if (DR1.names.any { str -> str.equals(gameStr, true) })
+                        return@let DR1
+                    if (DR2.names.any { str -> str.equals(gameStr, true) })
+                        return@let DR2
+                    if (V3.names.any { str -> str.equals(gameStr, true) })
+                        return@let V3
+                    return@ParboiledCommand fail(
+                        "commands.flatpatch.link_content.builder.err_no_game_for_name",
+                        gameStr
+                    )
+                } ?: return@ParboiledCommand fail(
+                    "commands.flatpatch.link_content.builder.err_no_game_for_name",
+                    ""
+                )
+            }
+
+            if (builder.linkingContentPath == null && builder.linkingContentName == null) {
+                printLocale("commands.flatpatch.link_content.builder.link_content_name")
+                builder.linkingContentName = builders.parameter()?.takeIf(String::isNotBlank)
+
+                if (builder.linkingContentName == null) {
+                    printLocale("commands.flatpatch.link_content.builder.link_content_path")
+                    builder.linkingContentPath = builders.filePath()
+                }
+            }
+
+            if (builder.filter == null) {
+                printLocale("commands.flatpatch.link_content.builder.filter")
+                builder.filter = builders.filter()
+            }
+        }
+
+        if (builder.linkingContentPath == null && builder.linkingContentName != null) {
+            builder.linkingContentPath = builder.workspacePath?.takeIf(File::isDirectory)
+                ?.let { workspacePath -> File(workspacePath, builder.linkingContentName) }
+        }
+
+        builder.workspacePath?.takeIf(File::isDirectory)?.let { workspacePath ->
+            builder.game?.let { game ->
+                val regex = when (game) {
+                    DR1 -> DR1_CONTENT_FOLDER_REGEX
+                    DR2 -> DR2_CONTENT_FOLDER_REGEX
+                    UDG -> UDG_CONTENT_FOLDER_REGEX
+                    V3 -> DRV3_CONTENT_FOLDER_REGEX
+                    else -> TODO("Make regex for $game content folder")
+                }
+
+                builder.workspacePath = workspacePath.listFiles()
+                    .firstOrNull { file -> file.name.matches(regex) }
+                    ?: return@ParboiledCommand fail("commands.flatpatch.link_content.err_no_content_child")
+
+                builder.baseGamePath = File(workspacePath, "base_game")
+            }
+        }
+
+        val args = builder.makeImmutable(defaultFilter = ".*".toRegex())
+
+        if (args.workspacePath == null)
+            return@ParboiledCommand fail("commands.flatpatch.link_content.err_no_workspace")
+
+        if (!args.workspacePath.exists())
+            return@ParboiledCommand fail("commands.flatpatch.link_content.err_workspace_doesnt_exist")
+
+        if (!args.workspacePath.isDirectory)
+            return@ParboiledCommand fail("commands.flatpatch.link_content.err_workspace_not_directory")
+
+        if (args.game == null)
+            return@ParboiledCommand fail("commands.flatpatch.link_content.err_no_game")
+
+        if (args.linkingContentPath == null)
+            return@ParboiledCommand fail("commands.flatpatch.link_content.err_no_link")
+
+        if (!args.linkingContentPath.exists())
+            return@ParboiledCommand fail("commands.flatpatch.link_content.err_link_doesnt_exist")
+
+        if (!args.linkingContentPath.isDirectory)
+            return@ParboiledCommand fail("commands.flatpatch.link_content.err_link_not_directory")
+
+        if (!args.createLink && args.baseGamePath == null)
+            return@ParboiledCommand fail("commands.flatpatch.link_content.err_no_base")
+
+        if (!args.createLink && !args.baseGamePath!!.exists())
+            return@ParboiledCommand fail("commands.flatpatch.link_content.err_base_doesnt_exist")
+
+        if (!args.createLink && !args.baseGamePath!!.isDirectory)
+            return@ParboiledCommand fail("commands.flatpatch.link_content.err_base_not_directory")
+
+        val filesToLink = args.linkingContentPath.walk().filter { file ->
+            file.isFile && !(file.name.startsWith(".") || file.name.startsWith("_") || file.parentFile.name.startsWith(".") || file.parentFile.name.startsWith(
+                "_"
+            ))
+        }
+            .map { file -> file relativePathFrom args.linkingContentPath }
+            .filter(args.filter!!::matches)
+
+        arbitraryProgressBar(loadingText = "commands.flatpatch.link_content.in_progress", loadedText = "") {
+            if (args.createLink) {
+                filesToLink.forEach { str ->
+                    val source = File(args.linkingContentPath, str)
+                    val dest = File(args.workspacePath, str)
+
+                    if (dest.exists())
+                        dest.delete()
+
+                    if (!source.exists())
+                        FlatPatchPlugin.LOGGER.warn("commands.flatpatch.link_content.warn_missing_source", source)
+
+                    Files.createLink(dest.toPath(), source.toPath())
+                }
+            } else {
+                filesToLink.forEach { str ->
+                    val source = File(args.baseGamePath, str)
+                    val dest = File(args.workspacePath, str)
+
+                    if (dest.exists())
+                        dest.delete()
+
+                    if (!source.exists())
+                        FlatPatchPlugin.LOGGER.warn("commands.flatpatch.link_content.warn_missing_source", source)
+                    else {
+                        Files.createLink(dest.toPath(), source.toPath())
+                    }
+                }
+            }
+        }
+
+        printlnLocale("commands.flatpatch.link_content.complete")
 
         return@ParboiledCommand SUCCESS
     }
