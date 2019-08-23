@@ -8,7 +8,6 @@ import info.spiralframework.console.registerCommandClassViaRequest
 import info.spiralframework.console.unregisterCommandClassViaRequest
 import info.spiralframework.core.SpiralCoreData
 import info.spiralframework.core.plugins.BaseSpiralPlugin
-import info.spiralframework.flatpatch.api.FlatPatchAPI
 import org.greenrobot.eventbus.EventBus
 import org.slf4j.Logger
 
@@ -18,7 +17,6 @@ object FlatPatchPlugin: BaseSpiralPlugin(FlatPatchPlugin::class.java, "spiralfra
 
     @JvmStatic
     fun main(args: Array<String>) {
-        println(FlatPatchAPI.instance?.version)
         val cockpit = Cockpit(args)
         load()
         cockpit.start()
@@ -31,12 +29,15 @@ object FlatPatchPlugin: BaseSpiralPlugin(FlatPatchPlugin::class.java, "spiralfra
 
     val parameterParser = ParameterParser()
     val gurrenFlatPatch = GurrenFlatPatch(parameterParser)
+    val gurrenRandomiser = GurrenRandomisation(parameterParser)
 
     override fun load() {
         EventBus.getDefault().registerCommandClassViaRequest<ParboiledCommand>(gurrenFlatPatch)
+        EventBus.getDefault().registerCommandClassViaRequest<ParboiledCommand>(gurrenRandomiser)
     }
 
     override fun unload() {
         EventBus.getDefault().unregisterCommandClassViaRequest<ParboiledCommand>(gurrenFlatPatch)
+        EventBus.getDefault().unregisterCommandClassViaRequest<ParboiledCommand>(gurrenRandomiser)
     }
 }

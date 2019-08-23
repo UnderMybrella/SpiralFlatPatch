@@ -220,56 +220,6 @@ class GurrenFlatPatch(override val parameterParser: ParameterParser) : CommandCl
         )
     }
 
-    val randomiseContentRule = makeRuleWith(::RandomiseContentArgs) { argsVar ->
-        Sequence(
-            Localised("commands.flatpatch.randomise.base"),
-            Action<Any> { pushMarkerSuccessBase() },
-            Optional(
-                InlineWhitespace(),
-                FirstOf(
-                    Sequence(
-                        Localised("commands.flatpatch.randomise.builder"),
-                        Action<Any> { argsVar.get().builder = true; true }
-                    ),
-                    Sequence(
-                        ExistingFilePath(),
-                        Action<Any> { argsVar.get().workspacePath = pop() as? File; true }
-                    )
-                ),
-                ZeroOrMore(
-                    InlineWhitespace(),
-                    FirstOf(
-                        Sequence(
-                            Localised("commands.flatpatch.randomise.game"),
-                            InlineWhitespace(),
-                            Parameter(),
-                            Action<Any> {
-                                val gameStr = pop() as String
-                                when {
-                                    DR1.names.any { str -> str.equals(gameStr, true) } -> argsVar.get().game = DR1
-                                    DR2.names.any { str -> str.equals(gameStr, true) } -> argsVar.get().game = DR2
-                                    V3.names.any { str -> str.equals(gameStr, true) } -> argsVar.get().game = V3
-                                    else -> return@Action pushMarkerFailedLocale(
-                                        locale("commands.flatpatch.randomise.err_no_game_for_name", gameStr)
-                                    )
-                                }
-
-                                return@Action true
-                            }
-                        ),
-                        Sequence(
-                            Localised("commands.flatpatch.randomise.filter"),
-                            InlineWhitespace(),
-                            Filter(),
-                            Action<Any> { argsVar.get().filter = pop() as? Regex; true }
-                        )
-                    )
-                ),
-                Action<Any> { pushMarkerSuccessCommand() }
-            )
-        )
-    }
-
     val prepareWorkspace = ParboiledCommand(prepareWorkspaceRule) { stack ->
         val workspaceBuilder = stack[0] as ExtractWorkspaceArgs
 
